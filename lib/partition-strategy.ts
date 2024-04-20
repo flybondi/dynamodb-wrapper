@@ -1,4 +1,4 @@
-import { DynamoDB } from 'aws-sdk';
+import { WriteRequest } from '@aws-sdk/client-dynamodb';
 import { estimateWriteCapacityUnits } from './estimate-item-size';
 
 const BATCH_WRITE_MAX_ITEM_COUNT = 25;
@@ -17,16 +17,24 @@ const BATCH_WRITE_MAX_ITEM_COUNT = 25;
  * @returns {DynamoDB.WriteRequests} a subset of the writeRequests array
  */
 
-export function getNextGroupByItemCount(writeRequests: DynamoDB.WriteRequests, startIndex: number,
-                                        options: IBatchWriteItemOption): DynamoDB.WriteRequests {
-
-    if (startIndex < 0 || startIndex >= writeRequests.length) {
-        return null;
-    } else {
-        const TARGET_ITEM_COUNT = Math.min(options.targetItemCount, BATCH_WRITE_MAX_ITEM_COUNT);
-        let endIndex = Math.min(startIndex + TARGET_ITEM_COUNT, writeRequests.length);
-        return writeRequests.slice(startIndex, endIndex);
-    }
+export function getNextGroupByItemCount(
+  writeRequests: WriteRequest[],
+  startIndex: number,
+  options: IBatchWriteItemOption
+): WriteRequest[] {
+  if (startIndex < 0 || startIndex >= writeRequests.length) {
+    return null;
+  } else {
+    const TARGET_ITEM_COUNT = Math.min(
+      options.targetItemCount,
+      BATCH_WRITE_MAX_ITEM_COUNT
+    );
+    let endIndex = Math.min(
+      startIndex + TARGET_ITEM_COUNT,
+      writeRequests.length
+    );
+    return writeRequests.slice(startIndex, endIndex);
+  }
 }
 
 /**
@@ -71,39 +79,46 @@ export function getNextGroupByItemCount(writeRequests: DynamoDB.WriteRequests, s
  * @returns {DynamoDB.WriteRequests} a subset of the writeRequests array
  */
 
-export function getNextGroupByTotalWCU(writeRequests: DynamoDB.WriteRequests, startIndex: number,
-                                       options: IBatchWriteItemOption): DynamoDB.WriteRequests {
+export function getNextGroupByTotalWCU(
+  writeRequests: WriteRequest[],
+  startIndex: number,
+  options: IBatchWriteItemOption
+): WriteRequest[] {
+  if (startIndex < 0 || startIndex >= writeRequests.length) {
+    return null;
+  } else {
+    // always include the first item
+    let estimatedWCU = _estimateWCUForPutOrDeleteRequest(
+      writeRequests[startIndex]
+    );
+    let totalEstimatedWCU = estimatedWCU;
+    let i = startIndex + 1;
 
-    if (startIndex < 0 || startIndex >= writeRequests.length) {
-        return null;
-    } else {
-        // always include the first item
-        let estimatedWCU = _estimateWCUForPutOrDeleteRequest(writeRequests[startIndex]);
-        let totalEstimatedWCU = estimatedWCU;
-        let i = startIndex + 1;
+    while (
+      i < writeRequests.length &&
+      i - startIndex < BATCH_WRITE_MAX_ITEM_COUNT
+    ) {
+      estimatedWCU = _estimateWCUForPutOrDeleteRequest(writeRequests[i]);
 
-        while (i < writeRequests.length && i - startIndex < BATCH_WRITE_MAX_ITEM_COUNT) {
-            estimatedWCU = _estimateWCUForPutOrDeleteRequest(writeRequests[i]);
-
-            if (totalEstimatedWCU + estimatedWCU <= options.targetGroupWCU) {
-                totalEstimatedWCU += estimatedWCU;
-                i++;
-            } else {
-                // do not include the item in the group, because the total WCU would exceed the threshold
-                break;
-            }
-        }
-
-        return writeRequests.slice(startIndex, i);
+      if (totalEstimatedWCU + estimatedWCU <= options.targetGroupWCU) {
+        totalEstimatedWCU += estimatedWCU;
+        i++;
+      } else {
+        // do not include the item in the group, because the total WCU would exceed the threshold
+        break;
+      }
     }
+
+    return writeRequests.slice(startIndex, i);
+  }
 }
 
-function _estimateWCUForPutOrDeleteRequest(writeRequest: DynamoDB.WriteRequest): number {
-    if (writeRequest.DeleteRequest) {
-        // assume the item to be deleted is 1 WCU (it's not possible to know the WCU
-        // before we actually delete the item, so all we can do is guess)
-        return 1;
-    } else {
-        return estimateWriteCapacityUnits(writeRequest.PutRequest.Item);
-    }
+function _estimateWCUForPutOrDeleteRequest(writeRequest: WriteRequest): number {
+  if (writeRequest.DeleteRequest) {
+    // assume the item to be deleted is 1 WCU (it's not possible to know the WCU
+    // before we actually delete the item, so all we can do is guess)
+    return 1;
+  } else {
+    return estimateWriteCapacityUnits(writeRequest.PutRequest.Item);
+  }
 }
