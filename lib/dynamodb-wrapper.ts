@@ -386,7 +386,11 @@ export class DynamoDBWrapper {
 
       try {
         addTablePrefixToRequest(this.tableNamePrefix, params);
-        result = await this.dynamoDB[method](params);
+        result = this.dynamoDB[method](params);
+        if (result.promise) {
+          result = result.promise();
+        }
+        result = await result;
         removeTablePrefixFromResponse(this.tableNamePrefix, result);
         responses.push(result);
         this._emitConsumedCapacitySummary(method, result);
